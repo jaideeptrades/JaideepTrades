@@ -46,7 +46,8 @@ SUMMARY: 2 sentence assessment`;
   });
 
   const data = await res.json();
-  return data.content[0].text;
+  const text = data.content?.map(b => b.text || "").join("") || "Analysis unavailable";
+return text;
 }
 
 app.post("/webhook", async (req, res) => {
