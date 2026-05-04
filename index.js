@@ -1,19 +1,16 @@
 const express = require(“express”);
-
 const app = express();
 app.use(express.json());
 
-const TELEGRAM_TOKEN   = process.env.TELEGRAM_TOKEN;
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-const ANTHROPIC_KEY    = process.env.ANTHROPIC_API_KEY;
-const PORT             = process.env.PORT || 3000;
-
-// ─── Telegram ─────────────────────────────────────────────────────────────────
+const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+const PORT = process.env.PORT || 3000;
 
 async function sendTelegram(msg) {
 try {
 const res = await fetch(
-`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`,
+“https://api.telegram.org/bot” + TELEGRAM_TOKEN + “/sendMessage”,
 {
 method: “POST”,
 headers: { “Content-Type”: “application/json” },
@@ -33,72 +30,60 @@ console.error(“Telegram error:”, err.message);
 }
 }
 
-// ─── Signal Validation ────────────────────────────────────────────────────────
-
 function parseSignal(raw) {
 if (!raw || typeof raw !== “object” || Object.keys(raw).length === 0) {
-return { valid: false, error: “Empty payload. Check your TradingView alert JSON.” };
+return { valid: false, error: “Empty payload.” };
 }
 
 const signal = {
-ticker:    raw.ticker    || raw.symbol      || raw.instrument  || “MNQ”,
-action:    raw.action    || raw.side        || raw.direction   || null,
-price:     raw.price     || raw.close       || raw.last_price  || null,
-timeframe: raw.timeframe || raw.tf          || “unknown”,
-account:   Number(raw.account || raw.accountSize || 50000),
+ticker:    raw.ticker    || raw.symbol    || “MNQ”,
+action:    raw.action    || raw.side      || raw.direction || null,
+price:     raw.price     || raw.close     || null,
+timeframe: raw.timeframe || raw.tf        || “unknown”,
+account:   Number(raw.account || 50000),
 atr:       raw.atr       || null,
 rsi:       raw.rsi       || null,
-indicator: raw.indicator || null,
 };
 
 if (!signal.action) return { valid: false, error: “Missing field: action (BUY or SELL)” };
-if (!signal.price)  return { valid: false, error: “Missing field: price / close” };
+if (!signal.price)  return { valid: false, error: “Missing field: price” };
 
 return { valid: true, signal };
 }
 
-// ─── Claude Analysis ──────────────────────────────────────────────────────────
-
 async function analyzeWithClaude(signal) {
-const { ticker, action, price, timeframe, account, atr, rsi, indicator } = signal;
-
 const extras = [
-atr       ? `ATR: ${atr}`             : null,
-rsi       ? `RSI: ${rsi}`             : null,
-indicator ? `Indicator: ${indicator}` : null,
+signal.atr ? “ATR: “ + signal.atr : null,
+signal.rsi ? “RSI: “ + signal.rsi : null,
 ].filter(Boolean).join(”\n”);
 
-const prompt = `You are an elite futures trading coach for Apex Trader Funding prop firm accounts.
-A TradingView alert just fired on MNQ (Micro Nasdaq Futures).
-Produce a clear, structured, actionable trade plan based on the signal below.
-
-=== SIGNAL ===
-Ticker:       ${ticker}
-Direction:    ${action.toUpperCase()}
-Entry Price:  ${price}
-Timeframe:    ${timeframe}
-Account Size: $${account.toLocaleString()}
-${extras}
-
-=== RULES ===
-
-- Risk exactly 1% of account per trade
-- MNQ point value = $2.00 per point
-- Calculate contracts using: Risk $ / (stop distance in points x $2)
-- Stop loss: use ATR x 1.5 if ATR provided, otherwise use 0.4% of entry price
-- Target 1 = 2R from entry, Target 2 = 3R from entry
-- If signal looks weak or contradictory, set VERDICT to AVOID and explain why
-
-=== RESPOND IN THIS EXACT FORMAT ===
-VERDICT: BUY or SELL or AVOID
-CONTRACTS: [number]
-ENTRY: [price]
-STOP: [price]
-TARGET 1 (2R): [price]
-TARGET 2 (3R): [price]
-RISK: $[amount]
-REWARD T1: $[amount] | REWARD T2: $[amount]
-SUMMARY: [2 sentences — reasoning and any caution]`;
+const prompt = “You are an elite futures trading coach for Apex Trader Funding prop firm accounts.\n”
++ “A TradingView alert fired on MNQ (Micro Nasdaq Futures).\n”
++ “Produce a structured actionable trade plan.\n\n”
++ “=== SIGNAL ===\n”
++ “Ticker: “ + signal.ticker + “\n”
++ “Direction: “ + signal.action.toUpperCase() + “\n”
++ “Entry Price: “ + signal.price + “\n”
++ “Timeframe: “ + signal.timeframe + “\n”
++ “Account Size: $” + signal.account.toLocaleString() + “\n”
++ extras + “\n\n”
++ “=== RULES ===\n”
++ “- Risk exactly 10f account\n”
++ “- MNQ = $2.00 per point\n”
++ “- Contracts = Risk$ / (stop points x 2)\n”
++ “- Stop: ATR x 1.5 if provided, else 0.40f entry\n”
++ “- Target 1 = 2R, Target 2 = 3R\n”
++ “- AVOID if signal looks weak\n\n”
++ “=== FORMAT ===\n”
++ “VERDICT: BUY or SELL or AVOID\n”
++ “CONTRACTS: X\n”
++ “ENTRY: X\n”
++ “STOP: X\n”
++ “TARGET 1 (2R): X\n”
++ “TARGET 2 (3R): X\n”
++ “RISK: $X\n”
++ “REWARD T1: $X | REWARD T2: $X\n”
++ “SUMMARY: 2 sentences”;
 
 try {
 const res = await fetch(“https://api.anthropic.com/v1/messages”, {
@@ -118,53 +103,49 @@ messages: [{ role: “user”, content: prompt }],
 ```
 const data = await res.json();
 
-if (data.content && data.content[0]?.text) {
+if (data.content && data.content[0] && data.content[0].text) {
   return data.content[0].text;
 }
 if (data.error) {
-  console.error("Claude API error:", data.error);
-  return `Claude error: ${data.error.message}`;
+  return "Claude error: " + data.error.message;
 }
-return "Unexpected response from Claude. Check logs.";
+return "Unexpected Claude response. Check logs.";
 ```
 
 } catch (err) {
-console.error(“Claude fetch error:”, err.message);
-return `Could not reach Claude: ${err.message}`;
+return “Could not reach Claude: “ + err.message;
 }
 }
 
-// ─── Webhook ──────────────────────────────────────────────────────────────────
-
-app.post(”/webhook”, async (req, res) => {
+app.post(”/webhook”, async function(req, res) {
 console.log(“Webhook hit:”, JSON.stringify(req.body));
 
-const { valid, error, signal } = parseSignal(req.body);
+var parsed = parseSignal(req.body);
 
-if (!valid) {
-console.warn(“Invalid signal:”, error);
-await sendTelegram(`*INVALID SIGNAL*\n\n${error}\n\nRaw:\n${JSON.stringify(req.body, null, 2)}`);
-return res.status(400).json({ ok: false, error });
+if (!parsed.valid) {
+console.warn(“Invalid signal:”, parsed.error);
+sendTelegram(“INVALID SIGNAL\n\n” + parsed.error);
+return res.status(400).json({ ok: false, error: parsed.error });
 }
 
-// Acknowledge immediately so TradingView does not timeout
 res.json({ ok: true });
 
-// Send signal summary
-await sendTelegram(
-`SIGNAL: ${signal.ticker} ${signal.action.toUpperCase()}\n` +
-`Price: ${signal.price}  |  TF: ${signal.timeframe}  |  Acct: $${signal.account.toLocaleString()}`
+var signal = parsed.signal;
+
+sendTelegram(
+“SIGNAL: “ + signal.ticker + “ “ + signal.action.toUpperCase() + “\n”
++ “Price: “ + signal.price + “ | TF: “ + signal.timeframe + “ | Acct: $” + signal.account.toLocaleString()
 );
 
-// Analyze and send trade plan
-const analysis = await analyzeWithClaude(signal);
-await sendTelegram(`TRADE PLAN - ${signal.ticker}\n\n${analysis}`);
+analyzeWithClaude(signal).then(function(analysis) {
+sendTelegram(“TRADE PLAN - “ + signal.ticker + “\n\n” + analysis);
+});
 });
 
-// ─── Health Check ─────────────────────────────────────────────────────────────
+app.get(”/”, function(req, res) {
+res.send(“Apex Alert Server Running”);
+});
 
-app.get(”/”, (_req, res) => res.send(“Apex Alert Server Running”));
-
-// ─── Start ────────────────────────────────────────────────────────────────────
-
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, function() {
+console.log(“Server running on port “ + PORT);
+});
