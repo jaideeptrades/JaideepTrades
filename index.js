@@ -7,47 +7,71 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 
 async function sendTelegram(msg) {
-  await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: msg, parse_mode: "Markdown" }),
-  });
+  try {
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ 
+        chat_id: TELEGRAM_CHAT_ID, 
+        text: msg, 
+        parse_mode: "Markdown" 
+      }),
+    });
+  } catch (e) {
+    console.error("Telegram error:", e);
+  }
 }
 
 async function analyzeWithClaude(signal) {
-  const prompt = `You are an elite futures trading coach for Apex Trader Funding prop accounts.
+  try {
+    console.log("Calling Claude with key:", ANTHROPIC_KEY ? "Key exists" : "NO KEY");
+    
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": ANTHROPIC_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 500,
+        messages: [{ 
+          role: "user", 
+          content: `You are an elite futures trading coach for Apex Trader Funding prop accounts.
 
 A TradingView alert just fired. Analyze this signal and give a concise trade plan.
 
 Signal: ${JSON.stringify(signal)}
 
-Respond in this format:
-VERDICT: BUY/SELL/AVOID
-CONTRACTS: number
-ENTRY: price
-STOP: price  
+Respond in this exact format:
+VERDICT: BUY or SELL or AVOID
+CONTRACTS: number based on $${signal.account} account at 1% risk
+ENTRY: ${signal.price}
+STOP: suggest a stop loss
 TARGET 1 (2R): price
 TARGET 2 (3R): price
 RISK: dollar amount
-SUMMARY: 2 sentence assessment`;
+SUMMARY: 2 sentence assessment`
+        }],
+      }),
+    });
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": ANTHROPIC_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 500,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
+    console.log("Claude response status:", res.status);
+    const data = await res.json();
+    console.log("Claude data:", JSON.stringify(data));
 
-  const data = await res.json();
-  const text = data.content?.map(b => b.text || "").join("") || "Analysis unavailable";
-return text;
+    if (data.content && data.content.length > 0) {
+      return data.content[0].text;
+    } else if (data.error) {
+      return `Claude error: ${data.error.message}`;
+    } else {
+      return `Unexpected response: ${JSON.stringify(data)}`;
+    }
+  } catch (e) {
+    console.error("Claude error:", e);
+    return `Error: ${e.message}`;
+  }
 }
 
 app.post("/webhook", async (req, res) => {
